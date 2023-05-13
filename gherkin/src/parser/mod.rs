@@ -6,12 +6,13 @@ use keyword::Keyword;
 #[cfg(test)]
 mod test;
 
-use std::{collections::HashSet, iter::Peekable, str::Lines};
+use std::{iter::Peekable, str::Lines};
 
 struct ParserInner<'a> {
     current_line: usize,
     text: &'a str,
     lines: Peekable<Lines<'a>>,
+    feature_name: Option<String>,
 }
 
 impl<'a> Iterator for ParserInner<'a> {
@@ -33,6 +34,7 @@ impl<'a> ParserInner<'a> {
             text: input,
             current_line: 0,
             lines: input.lines().peekable(),
+            feature_name: None,
         }
     }
 
@@ -119,15 +121,23 @@ impl<'a> ParserInner<'a> {
         }
 
         // Find duplicated steps (according to gherkin spec)
-        let mut steps_deduped = HashSet::new();
-        if let Some(duplicated_line) = steps.iter().enumerate().find_map(|(idx, s)| {
-            if !steps_deduped.insert(s.description.as_str()) {
-                Some(lines[idx])
-            } else {
-                None
+        #[cfg(feature = "step-duplicate-check")]
+        {
+            use std::collections::HashSet;
+
+            let mut steps_deduped = HashSet::new();
+            if let Some((_, description)) = steps.iter().enumerate().find_map(|(idx, s)| {
+                if !steps_deduped.insert(s.description.as_str()) {
+                    Some((lines[idx], s.description.as_str()))
+                } else {
+                    None
+                }
+            }) {
+                log::warn!(
+                    "Duplicate step definition '{description}' in feature {}",
+                    self.feature_name.as_ref().unwrap()
+                );
             }
-        }) {
-            return Self::format_error("Duplicate step definition", self.text, duplicated_line);
         }
 
         Ok(steps)
@@ -421,12 +431,22 @@ impl<'a> ParserInner<'a> {
         }))
     }
 
-    fn match_feature(&mut self) -> Result<Feature, String> {
+    fn match_feature(mut self) -> Result<Feature, String> {
+        self.take_empty_or_comment();
+
         let (_, rest_of_line, _) = self.match_kw_line(Keyword::Feature, false)?;
 
         let feature_name = rest_of_line.map(String::from);
+
+        self.feature_name = Some(
+            feature_name
+                .clone()
+                .unwrap_or("Unnamed feature".to_string()),
+        );
+
         let description = self.try_freeform_text()?;
 
+        self.take_empty_or_comment();
         let background = self.try_background()?;
 
         let mut scenarios = Vec::new();
@@ -469,7 +489,7 @@ pub struct Parser;
 
 impl Parser {
     pub fn parse_feature(input: &str) -> Result<Feature, String> {
-        let mut inner = ParserInner::new(input);
+        let inner = ParserInner::new(input);
         inner.match_feature()
     }
 }
