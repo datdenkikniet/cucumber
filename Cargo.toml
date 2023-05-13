@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "cucumber",
+    "cucumber-macros",
+    "gherkin",
+]
+default-members = [
+    "cucumber",
+    "cucumber-macros",
+    "gherkin",    
+]
