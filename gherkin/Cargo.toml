@@ -15,3 +15,4 @@ step-duplicate-check = [ "log" ]
 [dev-dependencies]
 anyhow = "1.0"
 pretty_env_logger = "0.4"
+clap = { version = "4", features = [ "derive" ] }

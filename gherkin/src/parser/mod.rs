@@ -1,3 +1,5 @@
+use crate::scenario_outline::TaggedScenarios;
+
 use super::*;
 
 mod keyword;
@@ -6,7 +8,7 @@ use keyword::Keyword;
 #[cfg(test)]
 mod test;
 
-use std::{iter::Peekable, str::Lines};
+use std::{collections::HashSet, iter::Peekable, str::Lines};
 
 struct ParserInner<'a> {
     current_line: usize,
@@ -39,8 +41,8 @@ impl<'a> ParserInner<'a> {
     }
 
     fn format_error<T>(message: &str, text: &str, line_number: usize) -> Result<T, String> {
-        let (_, _) = (text, line_number);
-        Err(message.into())
+        let line = text.lines().skip(line_number).next().unwrap();
+        Err(format!("{message}.\n--> {line} <--"))
     }
 
     fn make_error<T>(&mut self, message: &str) -> Result<T, String> {
@@ -62,6 +64,41 @@ impl<'a> ParserInner<'a> {
         }
     }
 
+    fn try_tags(&mut self) -> Result<Vec<String>, String> {
+        let mut tags = Vec::new();
+
+        let line = if let Some(line) = self.lines.peek() {
+            line
+        } else {
+            return Ok(tags);
+        };
+
+        let trimmed = line.trim();
+
+        if !trimmed.starts_with('@') {
+            return Ok(tags);
+        }
+
+        for tag in trimmed.split(' ') {
+            let trimmed = tag.trim();
+            if !trimmed.starts_with('@') {
+                return self
+                    .make_error(&format!("Invalid tag {trimmed} (does not start with '@')"));
+            }
+            tags.push(String::from(&trimmed[1..]));
+        }
+
+        self.next();
+
+        self.take_empty_or_comment();
+
+        if self.lines.peek().is_none() {
+            return self.make_error("Standalone tags are not allowed");
+        }
+
+        Ok(tags)
+    }
+
     fn match_steps(&mut self, in_keyword: Keyword) -> Result<Vec<Step>, String> {
         let mut steps = Vec::new();
         let mut lines = Vec::new();
@@ -71,7 +108,7 @@ impl<'a> ParserInner<'a> {
 
             let next_kw = self.peek_kw_line(true);
 
-            let (kw, description, has_colon) = match (steps.is_empty(), next_kw) {
+            let (kw, description, _) = match (steps.is_empty(), next_kw) {
                 (true, Err(_)) => {
                     return self.make_error("Expected step keyword, but got invalid keyword line")
                 }
@@ -100,14 +137,10 @@ impl<'a> ParserInner<'a> {
                 return self.make_error(&format!("{kw:?} step without description."));
             };
 
-            let step_data = if has_colon {
-                if let Some(table) = self.try_datatable()? {
-                    Some(StepData::DataTable(table))
-                } else if let Some(docstring) = self.try_docstring()? {
-                    Some(StepData::DocString(docstring))
-                } else {
-                    return self.make_error("Expected doc string or datatable as input to step.");
-                }
+            let step_data = if let Some(table) = self.try_datatable()? {
+                Some(StepData::DataTable(table))
+            } else if let Some(docstring) = self.try_docstring()? {
+                Some(StepData::DocString(docstring))
             } else {
                 None
             };
@@ -123,11 +156,9 @@ impl<'a> ParserInner<'a> {
         // Find duplicated steps (according to gherkin spec)
         #[cfg(feature = "step-duplicate-check")]
         {
-            use std::collections::HashSet;
-
-            let mut steps_deduped = HashSet::new();
+            let mut step_set = HashSet::new();
             if let Some((_, description)) = steps.iter().enumerate().find_map(|(idx, s)| {
-                if !steps_deduped.insert(s.description.as_str()) {
+                if !step_set.insert(s.description.as_str()) {
                     Some((lines[idx], s.description.as_str()))
                 } else {
                     None
@@ -269,13 +300,13 @@ impl<'a> ParserInner<'a> {
         Ok(Some(table))
     }
 
-    fn try_background(&mut self) -> Result<Option<Vec<Step>>, String> {
+    fn try_background(&mut self) -> Result<Vec<Step>, String> {
         if let Ok(Some((Keyword::Background, _, _))) = self.peek_kw_line(true) {
             self.next();
             let steps = self.match_steps(Keyword::Background)?;
-            Ok(Some(steps))
+            Ok(steps)
         } else {
-            return Ok(None);
+            return Ok(Vec::new());
         }
     }
 
@@ -377,6 +408,10 @@ impl<'a> ParserInner<'a> {
     }
 
     fn try_scenario_outline(&mut self) -> Result<Option<ScenarioOutline>, String> {
+        let outline_tags = self.try_tags()?;
+
+        self.take_empty_or_comment();
+
         let name = if let Ok(Some((Keyword::ScenarioOutline, name, _))) = self.peek_kw_line(false) {
             name.map(String::from)
         } else {
@@ -389,29 +424,67 @@ impl<'a> ParserInner<'a> {
 
         let steps = self.match_steps(Keyword::ScenarioOutline)?;
 
-        self.take_empty_or_comment();
+        let mut scenarios = Vec::new();
+        let mut first_placeholders: Option<HashSet<String>> = None;
 
-        let _ = self.match_kw_line(Keyword::Scenarios, false)?;
+        loop {
+            self.take_empty_or_comment();
 
-        let DataTable {
-            header: placeholders,
-            rows: examples,
-        } = if let Some(table) = self.try_datatable()? {
-            table
-        } else {
-            return self.make_error("Expected data table to follow `");
-        };
+            let tags = self.try_tags()?;
+
+            self.take_empty_or_comment();
+
+            let _ = match (
+                self.match_kw_line(Keyword::Scenarios, false),
+                scenarios.is_empty(),
+            ) {
+                (Ok(_), _) => {}
+                (Err(e), true) => return Err(e),
+                (Err(_), false) => break,
+            };
+
+            self.take_empty_or_comment();
+
+            let DataTable {
+                header: placeholders,
+                rows: values,
+            } = if let Some(table) = self.try_datatable()? {
+                table
+            } else {
+                return self.make_error("Expected data table to follow `Examples`.");
+            };
+
+            if let Some(first_placeholders) = &first_placeholders {
+                if placeholders.iter().any(|p| !first_placeholders.contains(p)) {
+                    return self.make_error(
+                        "Differing amount of or differently named placeholders in examples",
+                    );
+                }
+            } else {
+                first_placeholders = Some(placeholders.clone().into_iter().collect::<HashSet<_>>());
+            }
+            let placeholders = placeholders.into_iter().collect();
+            scenarios.push(TaggedScenarios::new(tags, placeholders, values)?);
+        }
 
         Ok(Some(ScenarioOutline {
+            tags: outline_tags,
             name,
             description,
             steps,
-            placeholders,
-            examples,
+            scenarios,
         }))
     }
 
     fn try_scenario(&mut self) -> Result<Option<Scenario>, String> {
+        let tags = self.try_tags()?;
+
+        if !tags.is_empty() {
+            println!("{tags:?}");
+        }
+
+        self.take_empty_or_comment();
+
         let name = if let Ok(Some((Keyword::Scenario, name, _))) = self.peek_kw_line(false) {
             name.map(String::from)
         } else {
@@ -425,6 +498,7 @@ impl<'a> ParserInner<'a> {
         let steps = self.match_steps(Keyword::Scenario)?;
 
         Ok(Some(Scenario {
+            tags,
             name,
             description,
             steps,
@@ -432,6 +506,10 @@ impl<'a> ParserInner<'a> {
     }
 
     fn match_feature(mut self) -> Result<Feature, String> {
+        self.take_empty_or_comment();
+
+        let feature_tags = self.try_tags()?;
+
         self.take_empty_or_comment();
 
         let (_, rest_of_line, _) = self.match_kw_line(Keyword::Feature, false)?;
@@ -461,13 +539,6 @@ impl<'a> ParserInner<'a> {
                 scenario_outlines.push(scenario_outline);
             } else if self.lines.peek().is_none() {
                 break;
-            } else if self
-                .lines
-                .peek()
-                .map(|s| s.trim_start().starts_with('@'))
-                .unwrap_or(false)
-            {
-                break;
             } else {
                 return self.make_error(
                     "Expected `Scenario`, `Example`, `Scenario Outline`, or `Scenario Template`.",
@@ -476,9 +547,10 @@ impl<'a> ParserInner<'a> {
         }
 
         Ok(Feature {
+            tags: feature_tags,
             name: feature_name,
             description,
-            background: background.unwrap_or(Vec::new()),
+            background,
             scenarios,
             scenario_outlines,
         })

@@ -1,14 +1,26 @@
 use std::{fs::File, io::Read};
 
 use anyhow::Error;
-use gherkin::Parser;
+use clap::Parser;
 
-fn parse_feature(name: &str, mut file: File) -> Result<(), Error> {
+#[derive(Parser)]
+pub struct Cli {
+    /// Print the contents of the parsed feature.
+    #[clap(long, short)]
+    pub print: bool,
+
+    pub file: String,
+}
+
+fn parse_feature(name: &str, mut file: File, print: bool) -> Result<(), Error> {
     let mut str = String::with_capacity(131072);
     file.read_to_string(&mut str)?;
-    let _ = Parser::parse_feature(&str).expect(&format!("Failed for {:?}", name));
 
-    // println!("{:#?}", feature_parsed);
+    let feature = gherkin::Parser::parse_feature(&str).expect(&format!("Failed for {:?}", name));
+
+    if print {
+        println!("{feature:#?}");
+    }
 
     Ok(())
 }
@@ -16,17 +28,10 @@ fn parse_feature(name: &str, mut file: File) -> Result<(), Error> {
 fn main() -> Result<(), Error> {
     pretty_env_logger::init();
 
-    let mut args = std::env::args();
-    args.next();
+    let cli = Cli::parse();
 
-    let path = if let Some(path) = args.next() {
-        path
-    } else {
-        return Err(anyhow::anyhow!("No path provided"));
-    };
-
-    let file = File::open(&path)?;
-    parse_feature(&path, file)?;
+    let file = File::open(&cli.file)?;
+    parse_feature(&cli.file, file, cli.print)?;
 
     Ok(())
 }

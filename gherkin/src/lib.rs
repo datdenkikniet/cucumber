@@ -4,6 +4,9 @@ pub use data_table::DataTable;
 mod parser;
 pub use parser::Parser;
 
+mod scenario_outline;
+pub use scenario_outline::ScenarioOutline;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StepType {
     Given,
@@ -14,13 +17,24 @@ pub enum StepType {
     Asterisk,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StepData {
     DocString(String),
     DataTable(DataTable),
 }
 
-#[derive(Debug, Clone)]
+impl StepData {
+    pub fn replace(&mut self, from: &str, to: &str) {
+        match self {
+            StepData::DocString(value) => {
+                *value = value.replace(from, to);
+            }
+            StepData::DataTable(_) => todo!(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Step {
     pub ty: StepType,
     pub description: String,
@@ -37,27 +51,28 @@ impl Step {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Scenario {
+    pub tags: Vec<String>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub steps: Vec<Step>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ScenarioOutline {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub steps: Vec<Step>,
-    pub placeholders: Vec<String>,
-    pub examples: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Feature {
+    pub tags: Vec<String>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub background: Vec<Step>,
     pub scenarios: Vec<Scenario>,
     pub scenario_outlines: Vec<ScenarioOutline>,
+}
+
+impl Feature {
+    pub fn scenarios(&self) -> impl Iterator<Item = Scenario> {
+        let scenarios = self.scenarios.clone();
+
+        scenarios.into_iter()
+    }
 }

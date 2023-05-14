@@ -68,11 +68,19 @@ pub fn basic() {
             Given <count> biscuits
             And <count> cups of tea
             Then I should be stuffed
+            @1-to-3
             Scenarios:
                 |count|
                 | 1 |
                 | 2 |
                 | 3 |
+
+            @4-to-6
+            Scenarios:
+                |count|
+                | 4 |
+                | 5 |
+                | 6 |
     "#;
 
     let feature = Parser::parse_feature(KIND_OF_EMPTY).unwrap();
