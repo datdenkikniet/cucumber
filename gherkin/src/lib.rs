@@ -70,9 +70,24 @@ pub struct Feature {
 }
 
 impl Feature {
-    pub fn scenarios(&self) -> impl Iterator<Item = Scenario> {
+    pub fn scenarios(&self) -> impl Iterator<Item = Scenario> + '_ {
         let scenarios = self.scenarios.clone();
 
-        scenarios.into_iter()
+        let outline_scenarios = self.scenario_outlines.iter().flat_map(|e| e.scenarios());
+
+        scenarios.into_iter().chain(outline_scenarios)
+    }
+
+    pub fn total_scenario_count(&self) -> usize {
+        let in_outlines: usize = self
+            .scenario_outlines
+            .iter()
+            .map(|s| {
+                let v: usize = s.scenarios.iter().map(|s| s.len()).sum();
+                v
+            })
+            .sum();
+
+        self.scenarios.len() + in_outlines
     }
 }

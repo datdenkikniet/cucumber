@@ -33,6 +33,10 @@ impl TaggedScenarios {
             }
         })
     }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

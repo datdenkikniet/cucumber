@@ -434,14 +434,18 @@ impl<'a> ParserInner<'a> {
 
             self.take_empty_or_comment();
 
-            let _ = match (
-                self.match_kw_line(Keyword::Scenarios, false),
-                scenarios.is_empty(),
-            ) {
-                (Ok(_), _) => {}
+            let _ = match (self.peek_kw_line(false), scenarios.is_empty()) {
+                (Ok(Some((Keyword::Scenarios, _, _))), _) => {}
                 (Err(e), true) => return Err(e),
-                (Err(_), false) => break,
+                (Ok(_), true) => {
+                    return self.make_error(
+                        "Must have at least one `Scenarios` section in a `Scenario Outline`",
+                    )
+                }
+                (Err(_), false) | (Ok(_), false) => break,
             };
+
+            self.next();
 
             self.take_empty_or_comment();
 
@@ -478,10 +482,6 @@ impl<'a> ParserInner<'a> {
 
     fn try_scenario(&mut self) -> Result<Option<Scenario>, String> {
         let tags = self.try_tags()?;
-
-        if !tags.is_empty() {
-            println!("{tags:?}");
-        }
 
         self.take_empty_or_comment();
 

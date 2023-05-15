@@ -22,6 +22,9 @@ fn parse_feature(name: &str, mut file: File, print: bool) -> Result<(), Error> {
         println!("{feature:#?}");
     }
 
+    let scenario_count = feature.scenarios().count();
+    let computed_scenario_count = feature.total_scenario_count();
+    assert_eq!(scenario_count, computed_scenario_count);
     Ok(())
 }
 
